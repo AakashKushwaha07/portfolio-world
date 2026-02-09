@@ -16,7 +16,6 @@ export function HeroScene() {
 
   const designation = ["Java Backend Developer", "AI Builder", "Problem Solver"];
 
-  // ✅ Show text for 5s, then hide
   const [showIntro, setShowIntro] = useState(true);
 
   useEffect(() => {
@@ -27,18 +26,23 @@ export function HeroScene() {
   return (
     <section
       ref={containerRef}
-      className="relative min-h-[180vh] w-full flex items-center justify-center overflow-hidden bg-black"
+      className="relative min-h-[100svh] md:min-h-[180vh] w-full flex items-center justify-center overflow-hidden bg-black"
     >
       {/* Background */}
       <Motion.div style={{ y, scale }} className="absolute inset-0 z-0">
         <img
           src={ph4_2}
           alt="Aakash Hero"
-          className="w-full h-full object-cover object-[100%_15%]"
+          className="
+            w-full h-full
+            object-contain md:object-cover
+            object-center md:object-[100%_15%]
+            bg-black
+          "
         />
       </Motion.div>
 
-      {/* ✅ Intro text overlay (auto disappears after 5s) */}
+      {/* Intro text overlay */}
       <AnimatePresence>
         {showIntro && (
           <Motion.div
@@ -97,8 +101,6 @@ export function HeroScene() {
           </Motion.div>
         )}
       </AnimatePresence>
-
-      {/* ...rest same */}
     </section>
   );
 }

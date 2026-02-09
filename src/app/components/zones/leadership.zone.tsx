@@ -172,13 +172,9 @@ export default {
 
             {/* CTA */}
             <div className="flex justify-end">
-              <button
-                type="button"
-                className="close-modal px-5 py-2 rounded-2xl bg-white/[0.04] border border-white/10
-                           text-white/80 font-bold hover:bg-white/[0.07] transition-colors"
-              >
-                Return to World
-              </button>
+              <button className="close-modal mt-4 text-xs text-zinc-500 hover:text-white uppercase tracking-widest">
+              Return to World
+            </button>
             </div>
           </div>
         </div>
