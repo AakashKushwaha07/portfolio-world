@@ -27,19 +27,29 @@ export function ClosingJourney() {
           </div>
           
           <div className="relative aspect-square">
-            <div className="absolute inset-0 bg-cyan-500/10 rounded-full blur-[100px] animate-pulse" />
-            <Motion.div
-              animate={{ 
-                rotate: 360,
-                transition: { duration: 50, repeat: Infinity, ease: "linear" }
-              }}
-              className="absolute inset-0 border border-white/5 rounded-full"
-            />
-            <div className="absolute inset-20 border border-cyan-500/10 rounded-full" />
-            <div className="absolute inset-0 flex items-center justify-center">
-              <span className="text-6xl md:text-9xl font-black text-white/5 tracking-tighter">BUILD</span>
-            </div>
-          </div>
+  {/* GLOW */}
+  <div className="absolute inset-0 bg-cyan-400/30 rounded-full blur-[80px] animate-pulse" />
+
+  {/* ROTATING RING */}
+  <Motion.div
+    animate={{
+      rotate: 360,
+      transition: { duration: 40, repeat: Infinity, ease: "linear" },
+    }}
+    className="absolute inset-0 border-2 border-cyan-400/60 rounded-full shadow-[0_0_40px_rgba(34,211,238,0.35)]"
+  />
+
+  {/* INNER RING */}
+  <div className="absolute inset-20 border-2 border-cyan-400/40 rounded-full shadow-[0_0_30px_rgba(34,211,238,0.25)]" />
+
+  {/* CENTER TEXT */}
+  <div className="absolute inset-0 flex items-center justify-center">
+    <span className="text-6xl md:text-9xl font-black text-cyan-400/20 tracking-tighter">
+      BUILD
+    </span>
+  </div>
+</div>
+
         </div>
 
         {/* Final CTA */}

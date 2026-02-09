@@ -1,19 +1,12 @@
 // AakashDevWorld.tsx
 // Mobile + low-end performance + framerate-independent car speed + tap-to-inspect zones
-// FIXES:
-// ✅ Building/road "jump" + sinking on slopes -> stable ground alignment (up-snaps, down-smooth, ignores crazy spikes)
-// ✅ Engine sound not working -> correct normalization + resume audio + ensure play loop
-// ✅ Brakes too slow -> hard brake before reversing + stronger brake rates
-//
-// Required public files:
-// public/models/source/gamecity.glb
-// public/models/source/car.glb
-// public/sounds/ferrari-engine.mp3
-//
-// Install:
-// npm i three
-//
-// Tailwind assumed configured globally.
+// FIXES INCLUDED:
+// ✅ Mobile slow car on Oppo / low FPS: speed & accel scaled by CITY_SCALE (because city is scaled 2.5x)
+// ✅ Mobile controls not good: use Pointer Events (more reliable than touchstart/touchend)
+// ✅ Sound not working on mobiles: audioCtx.resume + playsInline + visibility recovery + force play on gesture
+// ✅ Brakes too slow: stronger BRAKE + HARD BRAKE when pressing S while moving forward
+// ✅ Building/road jump + sinking on slopes: stable ground alignment (snap up, smooth down, ignore spikes)
+// ✅ NEW: Wall/building stuck fix: collision push-out + slide along wall (no more sticking)
 
 import { Icon } from "@iconify/react";
 import MiniMap from "./zones/MiniMap";
@@ -43,9 +36,8 @@ export default function AakashDevWorld() {
       /Android|iPhone|iPad|iPod|Opera Mini|IEMobile/i.test(navigator.userAgent) ||
       window.matchMedia?.("(pointer: coarse)").matches;
 
-    const deviceMemory = (navigator as any).deviceMemory ?? 4; // GB (approx)
+    const deviceMemory = (navigator as any).deviceMemory ?? 4;
     const cores = navigator.hardwareConcurrency ?? 4;
-
     const lowEnd = isMobile || deviceMemory <= 4 || cores <= 4;
 
     const QUALITY = {
@@ -56,7 +48,7 @@ export default function AakashDevWorld() {
       fog: !lowEnd,
     };
 
-    // Load Iconify web component script (optional)
+    // Iconify web component (optional)
     const ensureIconify = () => {
       const id = "iconify-webcomponent";
       if (document.getElementById(id)) return;
@@ -79,40 +71,14 @@ export default function AakashDevWorld() {
           overflow-y: auto;
           touch-action: auto;
       }
-      #canvas-container {
-          width: 100%;
-          height: 100%;
-          display: block;
-      }
-      .modal-panel {
-          transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
-          backdrop-filter: blur(16px);
-      }
-      .key-cap {
-          box-shadow: 0 4px 0 #27272a;
-          transition: all 0.1s;
-      }
-      .key-cap:active, .key-cap.pressed {
-          transform: translateY(4px);
-          box-shadow: 0 0 0 #27272a;
-      }
-      .world-label {
-          position: absolute;
-          transform: translate(-50%, -50%);
-          pointer-events: none;
-          transition: opacity 0.3s, transform 0.3s;
-          z-index: 10;
-      }
-      .custom-scroll::-webkit-scrollbar {
-          width: 6px;
-      }
-      .custom-scroll::-webkit-scrollbar-track {
-          background: rgba(255, 255, 255, 0.05);
-      }
-      .custom-scroll::-webkit-scrollbar-thumb {
-          background: rgba(255, 255, 255, 0.2);
-          border-radius: 10px;
-      }
+      #canvas-container { width: 100%; height: 100%; display: block; }
+      .modal-panel { transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1); backdrop-filter: blur(16px); }
+      .key-cap { box-shadow: 0 4px 0 #27272a; transition: all 0.1s; }
+      .key-cap:active, .key-cap.pressed { transform: translateY(4px); box-shadow: 0 0 0 #27272a; }
+      .world-label { position: absolute; transform: translate(-50%, -50%); pointer-events: none; transition: opacity 0.3s, transform 0.3s; z-index: 10; }
+      .custom-scroll::-webkit-scrollbar { width: 6px; }
+      .custom-scroll::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.05); }
+      .custom-scroll::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 10px; }
     `;
     document.head.appendChild(styleTag);
 
@@ -133,7 +99,6 @@ export default function AakashDevWorld() {
     let audioCtx: AudioContext | null = null;
     let engineEl: HTMLAudioElement | null = null;
     let engineSrc: MediaElementAudioSourceNode | null = null;
-
     let engineGain: GainNode | null = null;
     let engineFilter: BiquadFilterNode | null = null;
 
@@ -148,6 +113,9 @@ export default function AakashDevWorld() {
       engineEl.loop = true;
       engineEl.preload = "auto";
       engineEl.crossOrigin = "anonymous";
+      (engineEl as any).playsInline = true;
+      engineEl.muted = false;
+      engineEl.volume = 1;
 
       engineSrc = audioCtx.createMediaElementSource(engineEl);
 
@@ -156,13 +124,12 @@ export default function AakashDevWorld() {
       engineFilter.frequency.value = 1200;
 
       engineGain = audioCtx.createGain();
-      engineGain.gain.value = 0; // start silent
+      engineGain.gain.value = 0;
 
       engineSrc.connect(engineFilter);
       engineFilter.connect(engineGain);
       engineGain.connect(audioCtx.destination);
 
-      // do not rely on autoplay; we’ll also resume() in startGame
       engineEl.currentTime = 0;
       engineEl.play().catch(() => {});
     };
@@ -196,7 +163,6 @@ export default function AakashDevWorld() {
 
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, QUALITY.maxPixelRatio));
-
     renderer.shadowMap.enabled = QUALITY.shadows;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -230,13 +196,17 @@ export default function AakashDevWorld() {
     const worldGroup = new THREE.Group();
     scene.add(worldGroup);
 
+    // City is scaled => speed must scale too
+    const CITY_SCALE = 2.5;
+    const SPEED_SCALE = CITY_SCALE;
+
     const cityLoader = new GLTFLoader();
     cityLoader.load(
       "/models/source/gamecity.glb",
       (gltf) => {
         if (disposed) return;
         const city = gltf.scene;
-        city.scale.set(2.5, 2.5, 2.5);
+        city.scale.set(CITY_SCALE, CITY_SCALE, CITY_SCALE);
         city.position.set(0, 0, 0);
         city.traverse((node: any) => {
           if (node.isMesh) {
@@ -287,7 +257,6 @@ export default function AakashDevWorld() {
     hlSpot.target.position.set(0, 0, -10);
     playerGroup.add(hlSpot);
     playerGroup.add(hlSpot.target);
-
     scene.add(playerGroup);
 
     // ---------- Zone markers ----------
@@ -326,7 +295,7 @@ export default function AakashDevWorld() {
 
     // ---------- Game State ----------
     const state = {
-      speed: 0, // units/sec
+      speed: 0,
       angle: Math.PI,
       targetAngle: Math.PI,
       keys: { w: false, a: false, s: false, d: false },
@@ -377,6 +346,7 @@ export default function AakashDevWorld() {
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
 
+    // Mobile buttons -> Pointer Events
     const btnMap: Record<string, "w" | "a" | "s" | "d"> = {
       "btn-gas": "w",
       "btn-brake": "s",
@@ -387,28 +357,34 @@ export default function AakashDevWorld() {
     const touchHandlers: Array<{ el: HTMLElement; press: (e: Event) => void; release: (e: Event) => void }> = [];
 
     Object.entries(btnMap).forEach(([btnId, key]) => {
-      const btn = document.getElementById(btnId);
-      if (btn) {
-        const press = (e: any) => {
-          e.preventDefault();
-          // ensure audio also works if user starts pressing controls first (mobile)
-          if (!state.gameStarted) startGame();
-          state.keys[key] = true;
-        };
-        const release = (e: any) => {
-          e.preventDefault();
-          state.keys[key] = false;
-        };
+      const btn = document.getElementById(btnId) as HTMLElement | null;
+      if (!btn) return;
 
-        btn.addEventListener("touchstart", press, { passive: false });
-        btn.addEventListener("touchend", release, { passive: false });
-        btn.addEventListener("touchcancel", release, { passive: false });
-        btn.addEventListener("mousedown", press);
-        btn.addEventListener("mouseup", release);
-        btn.addEventListener("mouseleave", release);
+      btn.style.touchAction = "none";
 
-        touchHandlers.push({ el: btn as HTMLElement, press, release });
-      }
+      const press = (e: any) => {
+        e.preventDefault();
+        if (!state.gameStarted) startGame();
+        state.keys[key] = true;
+        try {
+          btn.setPointerCapture?.(e.pointerId);
+        } catch {}
+      };
+
+      const release = (e: any) => {
+        e.preventDefault();
+        state.keys[key] = false;
+        try {
+          btn.releasePointerCapture?.(e.pointerId);
+        } catch {}
+      };
+
+      btn.addEventListener("pointerdown", press, { passive: false });
+      btn.addEventListener("pointerup", release, { passive: false });
+      btn.addEventListener("pointercancel", release, { passive: false });
+      btn.addEventListener("pointerleave", release, { passive: false });
+
+      touchHandlers.push({ el: btn, press, release });
     });
 
     const btnCam = document.getElementById("btn-cam");
@@ -433,10 +409,9 @@ export default function AakashDevWorld() {
     }
 
     function startGame() {
-      // init audio only on gesture
       initEngineAudio();
-      // IMPORTANT for mobile Safari/Chrome: must resume context after user gesture
       audioCtx?.resume?.().catch(() => {});
+      engineEl?.play().catch(() => {});
 
       state.gameStarted = true;
       startScreen.classList.add("opacity-0", "pointer-events-none");
@@ -446,6 +421,13 @@ export default function AakashDevWorld() {
       }, 700);
     }
     btnStart.addEventListener("click", startGame);
+
+    const onVis = () => {
+      if (!state.gameStarted) return;
+      audioCtx?.resume?.().catch(() => {});
+      engineEl?.play().catch(() => {});
+    };
+    document.addEventListener("visibilitychange", onVis);
 
     // ---------- Labels ----------
     function updateLabels() {
@@ -483,7 +465,9 @@ export default function AakashDevWorld() {
       const modalContainer = document.getElementById("modal-container");
       modalContainer?.classList.remove("hidden");
 
-      document.querySelectorAll(".modal-panel").forEach((p) => p.classList.add("hidden", "opacity-0", "scale-95"));
+      document
+        .querySelectorAll(".modal-panel")
+        .forEach((p) => p.classList.add("hidden", "opacity-0", "scale-95"));
 
       const panel = document.getElementById(`modal-${zoneId}`);
       if (panel) {
@@ -510,39 +494,40 @@ export default function AakashDevWorld() {
     const closeBtns = Array.from(document.querySelectorAll(".close-modal"));
     closeBtns.forEach((btn) => btn.addEventListener("click", closeModal));
 
-    // ---------- PHYSICS (FRAMERATE-INDEPENDENT) ----------
-    // Supercar progressive top speed
-    const BASE_MAX_FWD = lowEnd ? 22 : 28;
-    const BOOST_MAX_FWD = lowEnd ? 48 : 58;
+    // ---------- PHYSICS ----------
+    const BASE_MAX_FWD = (lowEnd ? 22 : 28) * SPEED_SCALE;
+    const BOOST_MAX_FWD = (lowEnd ? 48 : 58) * SPEED_SCALE;
+    const BOOST_BUILD_RATE = (lowEnd ? 14 : 18) * SPEED_SCALE;
+    const BOOST_DECAY_RATE = (lowEnd ? 22 : 28) * SPEED_SCALE;
 
-    const BOOST_BUILD_RATE = lowEnd ? 14 : 18; // units/sec^2
-    const BOOST_DECAY_RATE = lowEnd ? 22 : 28; // units/sec^2
+    const MAX_REV_SPEED = -12 * SPEED_SCALE;
 
-    const MAX_REV_SPEED = -12;
-
-    const ACCEL = lowEnd ? 24 : 32; // base accel
-    const BRAKE = lowEnd ? 55 : 70; // ✅ stronger
-    const BRAKE_HARD = lowEnd ? 85 : 110; // ✅ emergency brake when holding S while moving forward
-    const ROLLING_DECEL = lowEnd ? 10 : 12;
+    const ACCEL = (lowEnd ? 24 : 32) * SPEED_SCALE;
+    const BRAKE = (lowEnd ? 55 : 70) * SPEED_SCALE;
+    const BRAKE_HARD = (lowEnd ? 85 : 110) * SPEED_SCALE;
+    const ROLLING_DECEL = (lowEnd ? 10 : 12) * SPEED_SCALE;
 
     const ROT_S = 2.1;
-
     let dynamicMaxFwd = BASE_MAX_FWD;
     const HIGH_SPEED_ACCEL_MULT = 1.15;
 
-    // Ground align (anti-jump + no-sink uphill)
+    // ✅ NEW: Anti-stuck collision parameters
+    const COLLISION_PUSH = 0.8 * SPEED_SCALE; // push out strength
+    const COLLISION_DAMP = 0.35; // speed loss on hit
+    const WALL_SLIDE = 0.25; // slide amount
+
+    // Ground alignment (anti-jump + no-sink)
     const groundRaycaster = new THREE.Raycaster();
     const tmpDown = new THREE.Vector3(0, -1, 0);
 
-    // Keep our own Y to stabilize motion
     let carY = playerGroup.position.y;
     let lastGroundY = 0;
-    const CAR_CLEARANCE = 0.14; // lift a bit so it never "sinks"
-    const UP_SNAP_SPEED = lowEnd ? 45 : 60; // ✅ goes UP fast (no sinking on raised roads)
-    const DOWN_SMOOTH_SPEED = lowEnd ? 20 : 28; // ✅ comes DOWN smoother (no jumpy drops)
-    const MAX_GROUND_SPIKE = 3.0; // ignore sudden weird spikes (building roofs etc.)
 
-    // Clock
+    const CAR_CLEARANCE = 0.14;
+    const UP_SNAP_SPEED = lowEnd ? 45 : 60;
+    const DOWN_SMOOTH_SPEED = lowEnd ? 20 : 28;
+    const MAX_GROUND_SPIKE = 3.0;
+
     const clock = new THREE.Clock();
     let raf = 0;
 
@@ -553,10 +538,9 @@ export default function AakashDevWorld() {
       const dt = Math.min(clock.getDelta(), 0.05);
 
       if (state.gameStarted && !state.modalOpen) {
-        // ---------- SPEED ----------
+        // ---- speed target ----
         let targetSpeed: number | null = null;
 
-        // build supercar top speed by holding W
         if (state.keys.w) {
           dynamicMaxFwd = Math.min(BOOST_MAX_FWD, dynamicMaxFwd + BOOST_BUILD_RATE * dt);
           targetSpeed = dynamicMaxFwd;
@@ -564,23 +548,15 @@ export default function AakashDevWorld() {
           dynamicMaxFwd = Math.max(BASE_MAX_FWD, dynamicMaxFwd - BOOST_DECAY_RATE * dt);
         }
 
-        // brakes/reverse behavior:
-        // if holding S while moving forward -> hard brake to 0 first, THEN allow reverse
         if (state.keys.s) {
-          if (state.speed > 2) {
-            targetSpeed = 0; // hard brake phase
-          } else {
-            targetSpeed = MAX_REV_SPEED; // reverse phase
-          }
+          if (state.speed > 2) targetSpeed = 0;
+          else targetSpeed = MAX_REV_SPEED;
         }
 
         if (targetSpeed !== null) {
           const accelNow = state.speed > BASE_MAX_FWD * 0.75 ? ACCEL * HIGH_SPEED_ACCEL_MULT : ACCEL;
 
-          // choose rate:
           let rate = targetSpeed > state.speed ? accelNow : BRAKE;
-
-          // hard brake if user is pressing S and we are still moving forward
           if (state.keys.s && state.speed > 0.5) rate = BRAKE_HARD;
 
           const diff = targetSpeed - state.speed;
@@ -589,21 +565,17 @@ export default function AakashDevWorld() {
           if (Math.abs(step) > Math.abs(diff)) state.speed = targetSpeed;
           else state.speed += step;
         } else {
-          // coasting
           if (state.speed > 0) state.speed = Math.max(0, state.speed - ROLLING_DECEL * dt);
           else if (state.speed < 0) state.speed = Math.min(0, state.speed + ROLLING_DECEL * dt);
         }
 
-        // ---------- ENGINE SOUND (FIXED) ----------
+        // ---- engine sound ----
         if (engineEl && engineGain && audioCtx) {
           const speedAbs = Math.abs(state.speed);
-
-          // ✅ correct normalization: forward uses dynamicMaxFwd, reverse uses abs(MAX_REV_SPEED)
           const maxForNorm = state.speed >= 0 ? Math.max(1, dynamicMaxFwd) : Math.max(1, Math.abs(MAX_REV_SPEED));
           const norm = clamp01(speedAbs / maxForNorm);
 
           if (norm > 0.02) {
-            // ensure it actually plays (some devices pause it)
             if (engineEl.paused) engineEl.play().catch(() => {});
             engineGain.gain.setTargetAtTime(norm * 0.85, audioCtx.currentTime, 0.06);
             engineEl.playbackRate = 0.9 + norm * 2.3;
@@ -613,7 +585,7 @@ export default function AakashDevWorld() {
           }
         }
 
-        // ---------- STEERING ----------
+        // ---- steering ----
         if (Math.abs(state.speed) > 0.2) {
           const dir = state.speed > 0 ? 1 : -1;
           if (state.keys.a) state.targetAngle += ROT_S * dt * dir;
@@ -621,57 +593,74 @@ export default function AakashDevWorld() {
         }
         state.angle += (state.targetAngle - state.angle) * Math.min(1, 10 * dt);
 
-        // ---------- MOVEMENT + COLLISION ----------
+        // ---- movement + collision (ANTI-STUCK) ----
         const moveDir = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), state.angle);
+        const forward = moveDir.clone().normalize();
 
-        const rayOrigin = playerGroup.position.clone().add(new THREE.Vector3(0, 1.5, 0));
-        const raycaster = new THREE.Raycaster(rayOrigin, moveDir.clone().normalize(), 0, 1.2);
-        const intersects = raycaster.intersectObjects(collidableMeshList, true);
+        // cast longer at higher speed to avoid entering walls
+        const castDist = 1.3 + Math.min(1.2, Math.abs(state.speed) * 0.03);
+
+        const rayOrigin = playerGroup.position.clone().add(new THREE.Vector3(0, 1.2, 0));
+        const raycaster = new THREE.Raycaster(rayOrigin, forward, 0, castDist);
+        const hits = raycaster.intersectObjects(collidableMeshList, true);
 
         const stepDist = state.speed * dt;
 
-        if (intersects.length > 0 && Math.abs(state.speed) > 0.2) {
-          state.speed = 0;
-        } else {
-          playerGroup.rotation.y = state.angle;
-          playerGroup.position.x -= Math.sin(state.angle) * stepDist;
-          playerGroup.position.z -= Math.cos(state.angle) * stepDist;
+        // intended move
+        let dx = -Math.sin(state.angle) * stepDist;
+        let dz = -Math.cos(state.angle) * stepDist;
+
+        if (hits.length > 0 && Math.abs(state.speed) > 0.15) {
+          // collision normal in world space
+          const n = hits[0].face?.normal?.clone() ?? new THREE.Vector3(0, 0, 1);
+          n.transformDirection(hits[0].object.matrixWorld).normalize();
+
+          // push out so you don't stay stuck
+          const push = COLLISION_PUSH * dt;
+          playerGroup.position.addScaledVector(n, push);
+
+          // lose speed but don't hard-lock
+          state.speed *= COLLISION_DAMP;
+
+          // slide along wall (remove component into the normal)
+          const v = new THREE.Vector3(dx, 0, dz);
+          const into = v.dot(n);
+          const slide = v.clone().addScaledVector(n, -into).multiplyScalar(WALL_SLIDE);
+
+          dx = slide.x;
+          dz = slide.z;
         }
 
-        // ---------- GROUND ALIGNMENT (FIX BUILDING JUMP + NO SINK) ----------
+        // apply movement after push/slide
+        playerGroup.rotation.y = state.angle;
+        playerGroup.position.x += dx;
+        playerGroup.position.z += dz;
+
+        // ---- ground align (stable) ----
         const groundRayOrigin = playerGroup.position.clone();
-        groundRayOrigin.y += 12; // a bit higher to always catch road
+        groundRayOrigin.y += 12;
 
         groundRaycaster.set(groundRayOrigin, tmpDown);
         groundRaycaster.far = 60;
 
-        const hits = groundRaycaster.intersectObjects(collidableMeshList, true);
+        const gHits = groundRaycaster.intersectObjects(collidableMeshList, true);
+        if (gHits.length > 0) {
+          const hitY = gHits[0].point.y;
 
-        if (hits.length > 0) {
-          // best is nearest hit (hits[0]) BUT protect from crazy spikes
-          const hitY = hits[0].point.y;
-
-          // ignore sudden spikes (often building roofs / wrong surface)
           if (Math.abs(hitY - lastGroundY) < MAX_GROUND_SPIKE || lastGroundY === 0) {
             lastGroundY = hitY;
           }
 
           const targetY = lastGroundY + CAR_CLEARANCE;
-
           const diffY = targetY - carY;
 
-          // ✅ go UP fast (prevents sinking into raised road)
-          if (diffY > 0) {
-            carY += Math.min(diffY, UP_SNAP_SPEED * dt);
-          } else {
-            // ✅ go DOWN smoothly (prevents jitter/jumps)
-            carY += Math.max(diffY, -DOWN_SMOOTH_SPEED * dt);
-          }
+          if (diffY > 0) carY += Math.min(diffY, UP_SNAP_SPEED * dt);
+          else carY += Math.max(diffY, -DOWN_SMOOTH_SPEED * dt);
 
           playerGroup.position.y = carY;
         }
 
-        // ---------- CAMERA ----------
+        // ---- camera ----
         const camOffsets = [new THREE.Vector3(0, 6, 9), new THREE.Vector3(-9, 4, 4), new THREE.Vector3(0, 8, 15)];
         const ideal = camOffsets[cameraMode].clone();
         ideal.applyAxisAngle(new THREE.Vector3(0, 1, 0), state.angle);
@@ -717,7 +706,9 @@ export default function AakashDevWorld() {
       // coords + labels + minimap tick
       if (state.gameStarted) {
         const coordsEl = document.getElementById("coords");
-        if (coordsEl) coordsEl.innerText = `X:${Math.round(playerGroup.position.x)} Z:${Math.round(playerGroup.position.z)}`;
+        if (coordsEl) {
+          coordsEl.innerText = `X:${Math.round(playerGroup.position.x)} Z:${Math.round(playerGroup.position.z)}`;
+        }
         updateLabels();
 
         window.dispatchEvent(
@@ -755,6 +746,8 @@ export default function AakashDevWorld() {
       window.removeEventListener("resize", onResize);
 
       btnStart.removeEventListener("click", startGame);
+      document.removeEventListener("visibilitychange", onVis);
+
       if (btnCam) btnCam.removeEventListener("click", onCamClick);
 
       if (proximityAlert) {
@@ -769,12 +762,10 @@ export default function AakashDevWorld() {
       closeBtns.forEach((btn) => btn.removeEventListener("click", closeModal));
 
       touchHandlers.forEach(({ el, press, release }) => {
-        el.removeEventListener("touchstart", press as any);
-        el.removeEventListener("touchend", release as any);
-        el.removeEventListener("touchcancel", release as any);
-        el.removeEventListener("mousedown", press as any);
-        el.removeEventListener("mouseup", release as any);
-        el.removeEventListener("mouseleave", release as any);
+        el.removeEventListener("pointerdown", press as any);
+        el.removeEventListener("pointerup", release as any);
+        el.removeEventListener("pointercancel", release as any);
+        el.removeEventListener("pointerleave", release as any);
       });
 
       // stop engine sound
@@ -837,7 +828,9 @@ export default function AakashDevWorld() {
 
           <h1 className="text-5xl sm:text-6xl font-extrabold text-white tracking-tight">
             Aakash
-            <span className="block text-zinc-400 font-light tracking-wide text-3xl sm:text-4xl mt-1">Kushwaha</span>
+            <span className="block text-zinc-400 font-light tracking-wide text-3xl sm:text-4xl mt-1">
+              Kushwaha
+            </span>
           </h1>
 
           <h2 className="text-base sm:text-lg text-zinc-400 font-light tracking-wide">
@@ -845,8 +838,8 @@ export default function AakashDevWorld() {
           </h2>
 
           <p className="text-sm text-zinc-500 leading-relaxed max-w-md mx-auto">
-            This is an interactive world built from my journey — drive through skills, projects, certifications, and
-            milestones.
+            This is an interactive world built from my journey — drive through skills, projects,
+            certifications, and milestones.
           </p>
 
           <button
@@ -857,7 +850,10 @@ export default function AakashDevWorld() {
                  hover:scale-[1.06] hover:shadow-[0_0_40px_rgba(255,255,255,0.35)]"
           >
             <span className="relative z-10 tracking-wide">Enter World</span>
-            <div className="absolute inset-0 rounded-full ring-4 ring-white/20 group-hover:ring-white/40 transition-all" />
+            <div
+              className="absolute inset-0 rounded-full ring-4 ring-white/20
+                   group-hover:ring-white/40 transition-all"
+            />
           </button>
 
           <div className="pt-10 flex flex-col gap-3 text-[10px] text-zinc-600 uppercase tracking-widest">
@@ -866,7 +862,9 @@ export default function AakashDevWorld() {
               {["WASD", "Arrows", "Touch", "C : Camera", "Tap Inspect"].map((c) => (
                 <span
                   key={c}
-                  className="px-3 py-1 border border-zinc-800 rounded-md bg-zinc-900/60 backdrop-blur text-zinc-400"
+                  className="px-3 py-1 border border-zinc-800 rounded-md
+                       bg-zinc-900/60 backdrop-blur
+                       text-zinc-400"
                 >
                   {c}
                 </span>
@@ -885,7 +883,9 @@ export default function AakashDevWorld() {
           <div className="flex flex-col gap-1 pointer-events-auto bg-zinc-900/60 backdrop-blur p-3 rounded-lg border border-white/10 shadow-lg">
             <div className="flex items-center gap-2">
               <Icon icon="solar:gamepad-linear" className="text-emerald-400" width="16" />
-              <h1 className="text-xs font-semibold tracking-tight text-white uppercase">Aakash.Dev [World]</h1>
+              <h1 className="text-xs font-semibold tracking-tight text-white uppercase">
+                Aakash.Dev [World]
+              </h1>
             </div>
             <div className="text-[10px] text-zinc-400 tracking-wide font-mono" id="coords">
               POS: 0, 0
