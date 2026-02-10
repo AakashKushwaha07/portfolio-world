@@ -16,7 +16,7 @@ export function CinematicNav() {
     { name: "Journey", href: "#journey" },
     { name: "Milestones", href: "#achievements" },
     { name: "Artifacts", href: "#certs" },
-    { name: "Chapters", href: "#projects" },
+    { name: "Projects", href: "#projects" },
     { name: "Contact", href: "#contact" },
   ];
 

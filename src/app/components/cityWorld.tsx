@@ -834,7 +834,7 @@ export default function AakashDevWorld() {
           </h1>
 
           <h2 className="text-base sm:text-lg text-zinc-400 font-light tracking-wide">
-            Java Backend Developer · AI Builder · DSA Enthusiast
+            Java Backend Developer (SDE-1) · AI Builder · Spring Boot . REST APIs . SQL 
           </h2>
 
           <p className="text-sm text-zinc-500 leading-relaxed max-w-md mx-auto">
@@ -855,6 +855,14 @@ export default function AakashDevWorld() {
                    group-hover:ring-white/40 transition-all"
             />
           </button>
+          {/* ✅ Skip to Dashboard (fast path) */}
+          <a
+          href="#dashboard"
+          className="px-7 py-4 rounded-full text-sm font-semibold
+                   border border-zinc-700 bg-zinc-900/40 text-zinc-200
+                   hover:bg-zinc-900/60 hover:border-zinc-600 transition"
+            >Skip World → Dashboard
+          </a>
 
           <div className="pt-10 flex flex-col gap-3 text-[10px] text-zinc-600 uppercase tracking-widest">
             <p className="text-zinc-500">Controls</p>
